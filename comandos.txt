@@ -1,0 +1,36 @@
+cd Escritorio/Proyecto-3-Sistemas-Operativos
+gcc -o test2 test2.c -lpthread
+
+T1:
+./test2
+
+T2:
+./test2 0000
+
+T1:
+open 127.0.0.1:0000
+lcd local
+ls
+
+T2:
+cd cliente
+pwd
+ls
+
+En ambas
+T1:
+get michi.jpg
+get pruebaRemoto.txt
+put hamster.jpg
+put pruebaLocal.txt
+
+T1:
+put michi.jpg
+put pruebaRemoto.txt
+get hamster.jpg
+get pruebaLocal.txt
+
+
+
+
+

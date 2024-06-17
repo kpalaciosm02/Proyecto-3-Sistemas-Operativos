@@ -26,6 +26,8 @@ void close_client_connection();
 void list_files(int client_sock);
 void change_directory(int client_sock, const char* path);
 void print_working_directory(int client_sock);
+void handle_get(int client_sock, const char *filename);
+void handle_put(int client_sock, const char *filename);
 
 int server_socket;
 int running = 1;
@@ -248,6 +250,18 @@ void handle_command(char *input) {
         } else {
             printf("No active connection to send pwd command.\n");
         }
+    } else if (strcmp(args[0], "get") == 0) {
+        if (arg_count != 2) {
+            printf("Usage: get <filename>\n");
+        } else {
+            handle_get(client_socket, args[1]);
+        }
+    } else if (strcmp(args[0], "put") == 0) {
+        if (arg_count != 2) {
+            printf("Usage: put <filename>\n");
+        } else {
+            handle_put(client_socket, args[1]);
+        }
     } else {
         printf("Invalid command. Try again.\n");
     }
@@ -362,3 +376,69 @@ void print_working_directory(int client_sock) {
         write(client_sock, error_msg, strlen(error_msg));
     }
 }
+void transfer_file(int source_socket, int destination_socket, const char *filename, int is_upload) {
+    char buffer[BUF_SIZE];
+    FILE *file = fopen(filename, is_upload ? "rb" : "wb");
+    if (file == NULL) {
+        char error_msg[BUF_SIZE];
+        snprintf(error_msg, sizeof(error_msg), "Failed to open file %s\n", filename);
+        write(destination_socket, error_msg, strlen(error_msg));
+        return;
+    }
+
+    while (1) {
+        int bytes_read = fread(buffer, 1, BUF_SIZE, file);
+        if (bytes_read <= 0) break;
+
+        if (write(destination_socket, buffer, bytes_read) != bytes_read) {
+            perror("Error sending file data");
+            break;
+        }
+    }
+
+    fclose(file);
+}
+void handle_get(int client_sock, const char *filename) {
+    // Abrir el archivo local
+    FILE *file = fopen(filename, "rb");
+    if (file == NULL) {
+        char error_msg[BUF_SIZE];
+        snprintf(error_msg, sizeof(error_msg), "Failed to open file %s\n", filename);
+        write(client_sock, error_msg, strlen(error_msg));
+        perror("Error opening file");
+        return;
+    }
+
+    // Enviar el nombre del archivo al cliente
+    printf("Sending file: %s\n", filename);
+    write(client_sock, filename, strlen(filename));
+
+    // Leer y enviar el contenido del archivo en bloques
+    char buffer[BUF_SIZE];
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, BUF_SIZE, file)) > 0) {
+        if (write(client_sock, buffer, bytes_read) != bytes_read) {
+            perror("Error sending file data");
+            break;
+        }
+    }
+
+    // Cerrar el archivo local y la conexión con el cliente
+    fclose(file);
+    close(client_sock);
+}
+
+
+void handle_put(int client_sock, const char *filename) {
+    // Recibir el nombre del archivo del cliente
+    char received_filename[BUF_SIZE];
+    if (read(client_sock, received_filename, sizeof(received_filename)) <= 0) {
+        perror("Error receiving filename");
+        close(client_sock);
+        return;
+    }
+
+    // Transferir el archivo desde el cliente al servidor
+    transfer_file(client_sock, client_sock, received_filename, 1);
+}
+
