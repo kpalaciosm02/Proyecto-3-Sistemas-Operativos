@@ -26,6 +26,9 @@ void close_client_connection();
 void list_files(int client_sock);
 void change_directory(int client_sock, const char* path);
 void print_working_directory(int client_sock);
+void change_local_directory(const char* path);
+void print_local_working_directory();
+void print_client_directory();
 
 int server_socket;
 int running = 1;
@@ -126,13 +129,55 @@ void *handle_client(void *arg) {
     free(arg);
 
     char buffer[MAX_INPUT_SIZE];
+    char cwd[MAX_INPUT_SIZE];
     while (running) {
         int bytes_received = recv(client_socket, buffer, MAX_INPUT_SIZE, 0);
         if (bytes_received <= 0) {
             break;
         }
         buffer[bytes_received] = '\0';
-        printf("Received from client: %s\n", buffer);
+
+        if (strcmp(buffer, "pwd\n") == 0) {
+            // Handle the pwd command
+            if (getcwd(cwd, sizeof(cwd)) != NULL) {
+                //strcat(cwd, "\n");
+                send(client_socket, cwd, strlen(cwd), 0);
+            } else {
+                char error_msg[] = "Failed to get current working directory\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            }
+        } else if (strcmp(buffer, "ls") == 0) {
+            // Handle the ls command
+            DIR *d;
+            struct dirent *dir;
+            char result[MAX_INPUT_SIZE] = "";
+            d = opendir(".");
+            if (d) {
+                while ((dir = readdir(d)) != NULL) {
+                    strcat(result, dir->d_name);
+                    strcat(result, "\n");
+                }
+                closedir(d);
+                send(client_socket, result, strlen(result), 0);
+            } else {
+                char error_msg[] = "Failed to open directory.\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            }
+        } else if (strncmp(buffer, "cd ", 3) == 0) {
+            // Handle the cd command
+            char *path = buffer + 3;
+            path[strlen(path) - 1] = '\0'; // Remove the trailing newline character
+            if (chdir(path) == 0) {
+                char success_msg[MAX_INPUT_SIZE];
+                snprintf(success_msg, MAX_INPUT_SIZE, "Changed directory to %s\n", path);
+                send(client_socket, success_msg, strlen(success_msg), 0);
+            } else {
+                char error_msg[] = "Failed to change directory\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            }
+        } else {
+            printf("Received from client: %s\n", buffer);
+        }
     }
 
     printf("Connection closed with client\n");
@@ -229,14 +274,42 @@ void handle_command(char *input) {
         printf("Close command\n");
         close_client_connection();
     } else if (strcmp(args[0], "cd") == 0) {
-        change_directory(client_socket, args[1]);
+        if (client_socket != -1) {
+            char cd_cmd[MAX_INPUT_SIZE];
+            snprintf(cd_cmd, MAX_INPUT_SIZE, "cd %s\n", args[1]);
+            write(client_socket, cd_cmd, strlen(cd_cmd));
+        } else {
+            printf("No active connection to send cd command.\n");
+        }
     } else if (strcmp(args[0], "get") == 0) {
-        printf("Get command\n");
+        if (client_socket != -1 && arg_count == 2) {
+            char get_cmd[MAX_INPUT_SIZE];
+            snprintf(get_cmd, sizeof(get_cmd), "get %s\n", args[1]);
+            write(client_socket, get_cmd, strlen(get_cmd));
+
+            // Send the file contents to the server
+            FILE *file = fopen(args[1], "rb");
+            if (file != NULL) {
+                char buffer[BUF_SIZE];
+                size_t bytes_read;
+                while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+                    send(client_socket, buffer, bytes_read, 0);
+                }
+                fclose(file);
+                send(client_socket, "EOF", 4, 0); // Send an EOF marker
+            } else {
+                char error_msg[] = "Failed to open file.\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            }
+        } else {
+            printf("Usage: get <filename>\n");
+        }
     } else if (strcmp(args[0], "lcd") == 0) {
-        printf("lcd command\n");
+        change_local_directory(args[1]);
     } else if (strcmp(args[0], "ls") == 0) {
         if (client_socket != -1) {
-            list_files(client_socket);
+            char ls_cmd[] = "ls";
+            write(client_socket, ls_cmd, strlen(ls_cmd));
         } else {
             printf("No active connection to send ls command.\n");
         }
@@ -244,11 +317,14 @@ void handle_command(char *input) {
         printf("Put command\n");
     } else if (strcmp(args[0], "pwd") == 0) {
         if (client_socket != -1) {
-            print_working_directory(client_socket);
+            char pwd_cmd[] = "pwd\n";
+            write(client_socket, pwd_cmd, strlen(pwd_cmd));
         } else {
             printf("No active connection to send pwd command.\n");
         }
-    } else {
+    } else if (strcmp(args[0], "lpwd") == 0) {
+        print_local_working_directory();
+    }else {
         printf("Invalid command. Try again.\n");
     }
 }
@@ -256,6 +332,7 @@ void handle_command(char *input) {
 void *handle_server(void *arg) {
     int sock = *((int *)arg);
     char buffer[MAX_INPUT_SIZE];
+    FILE *file = NULL;
     while (running) {
         int bytes_received = recv(sock, buffer, MAX_INPUT_SIZE, 0);
         if (bytes_received <= 0) {
@@ -267,21 +344,31 @@ void *handle_server(void *arg) {
             // Handle the ls command
             DIR *d;
             struct dirent *dir;
+            char result[MAX_INPUT_SIZE] = "";
             d = opendir(".");
             if (d) {
-                char result[MAX_INPUT_SIZE] = "";
                 while ((dir = readdir(d)) != NULL) {
                     strcat(result, dir->d_name);
                     strcat(result, "\n");
                 }
                 closedir(d);
-                printf("Result from handle_server: %s\n", result);
+                printf("Handle server print: %s\n",result);
                 send(sock, result, strlen(result), 0);
             } else {
-                send(sock, "Failed to open directory.\n", strlen("Failed to open directory.\n"), 0);
+                char error_msg[] = "Failed to open directory.\n";
+                send(sock, error_msg, strlen(error_msg), 0);
+            }
+        } else if (strcmp(buffer, "pwd") == 0){
+            char cwd[MAX_INPUT_SIZE];
+            if (getcwd(cwd, sizeof(cwd)) != NULL) {
+                strcat(cwd, "\n");
+                send(sock, cwd, strlen(cwd), 0);
+            } else {
+                char error_msg[] = "Failed to get current working directory\n";
+                send(sock, error_msg, strlen(error_msg), 0);
             }
         } else {
-            printf("Server: %s\n", buffer);
+            printf("Client: %s\n", buffer);
         }
     }
     close(sock);
@@ -360,5 +447,36 @@ void print_working_directory(int client_sock) {
         perror("getcwd() error");
         char error_msg[] = "Failed to get current working directory\n";
         write(client_sock, error_msg, strlen(error_msg));
+    }
+}
+
+void print_local_working_directory() {
+    char cwd[BUF_SIZE];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        strcat(cwd, "\n");
+        printf("%s",cwd);
+    } else {
+        perror("getcwd() error");
+        char error_msg[] = "Failed to get current working directory\n";
+        printf("%s",error_msg);
+    }
+}
+
+void change_local_directory(const char* path) {
+    char buffer[BUF_SIZE];
+    if (chdir(path) == 0) {
+        snprintf(buffer, sizeof(buffer), "Local directory changed to %s\n", path);
+    } else {
+        snprintf(buffer, sizeof(buffer), "Failed to change local directory to %s\n", path);
+    }
+    printf("%s", buffer);
+}
+
+void print_client_directory() {
+    char cwd[BUF_SIZE];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Local directory: %s\n", cwd);
+    } else {
+        perror("getcwd() error");
     }
 }
