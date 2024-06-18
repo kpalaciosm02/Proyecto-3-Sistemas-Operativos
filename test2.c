@@ -130,6 +130,7 @@ void *handle_client(void *arg) {
 
     char buffer[MAX_INPUT_SIZE];
     char cwd[MAX_INPUT_SIZE];
+    FILE *file = NULL;
     while (running) {
         int bytes_received = recv(client_socket, buffer, MAX_INPUT_SIZE, 0);
         if (bytes_received <= 0) {
@@ -175,7 +176,27 @@ void *handle_client(void *arg) {
                 char error_msg[] = "Failed to change directory\n";
                 send(client_socket, error_msg, strlen(error_msg), 0);
             }
-        } else {
+        } else if (strncmp(buffer, "get ", 4) == 0) {
+            char *filename = buffer + 4;
+            filename[strlen(filename) - 1] = '\0'; // Remove the trailing newline character
+
+            file = fopen(filename, "wb");
+            if (file == NULL) {
+                char error_msg[] = "Failed to open file for writing\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            } else {
+                char success_msg[] = "Ready to receive file\n";
+                send(client_socket, success_msg, strlen(success_msg), 0);
+
+                char buffer[BUF_SIZE];
+                int bytes_read;
+                while ((bytes_read = recv(client_socket, buffer, BUF_SIZE, 0)) > 0) {
+                    fwrite(buffer, 1, bytes_read, file);
+                }
+                fclose(file);
+                printf("File %s received successfully.\n", filename);
+            }
+        }else {
             printf("Received from client: %s\n", buffer);
         }
     }
@@ -218,6 +239,7 @@ void handle_command(char *input) {
     char *token = strtok(input, " ");
     int arg_count = 0;
     char buffer[BUF_SIZE];
+    char filename[MAX_INPUT_SIZE];
     while (token != NULL && arg_count < MAX_ARG_COUNT - 1) {
         args[arg_count++] = token;
         token = strtok(NULL, " ");
@@ -282,27 +304,36 @@ void handle_command(char *input) {
             printf("No active connection to send cd command.\n");
         }
     } else if (strcmp(args[0], "get") == 0) {
-        if (client_socket != -1 && arg_count == 2) {
-            char get_cmd[MAX_INPUT_SIZE];
-            snprintf(get_cmd, sizeof(get_cmd), "get %s\n", args[1]);
-            write(client_socket, get_cmd, strlen(get_cmd));
-
-            // Send the file contents to the server
-            FILE *file = fopen(args[1], "rb");
-            if (file != NULL) {
-                char buffer[BUF_SIZE];
-                size_t bytes_read;
-                while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-                    send(client_socket, buffer, bytes_read, 0);
-                }
-                fclose(file);
-                send(client_socket, "EOF", 4, 0); // Send an EOF marker
-            } else {
-                char error_msg[] = "Failed to open file.\n";
-                send(client_socket, error_msg, strlen(error_msg), 0);
-            }
-        } else {
+        if (client_socket != -1) {
+        if (arg_count != 2) {
             printf("Usage: get <filename>\n");
+            return;
+        }
+        char get_cmd[MAX_INPUT_SIZE];
+        snprintf(get_cmd, MAX_INPUT_SIZE, "get %s\n", args[1]);
+        write(client_socket, get_cmd, strlen(get_cmd));
+
+        char buffer[BUF_SIZE];
+        int bytes_read;
+        FILE *file = fopen(args[1], "rb");
+        if (file == NULL) {
+            perror("Error opening file");
+            return;
+        }
+
+        // Wait for the server to be ready
+        if (recv(client_socket, buffer, BUF_SIZE, 0) > 0) {
+            printf("Server: %s\n", buffer);
+
+            // Send the file data
+            while ((bytes_read = fread(buffer, 1, BUF_SIZE, file)) > 0) {
+                write(client_socket, buffer, bytes_read);
+            }
+        }
+
+        fclose(file);
+        } else {
+            printf("No active connection to send get command.\n");
         }
     } else if (strcmp(args[0], "lcd") == 0) {
         change_local_directory(args[1]);
@@ -333,6 +364,9 @@ void *handle_server(void *arg) {
     int sock = *((int *)arg);
     char buffer[MAX_INPUT_SIZE];
     FILE *file = NULL;
+    char filename[MAX_INPUT_SIZE];
+    memset(filename, 0, sizeof(filename));
+    int receiving_file = 0;
     while (running) {
         int bytes_received = recv(sock, buffer, MAX_INPUT_SIZE, 0);
         if (bytes_received <= 0) {
@@ -340,7 +374,28 @@ void *handle_server(void *arg) {
         }
         buffer[bytes_received] = '\0';
 
-        if (strcmp(buffer, "ls") == 0) {
+        if (strncmp(buffer, "get ", 4) == 0) {
+            // Handle the get command
+            receiving_file = 1;
+            char *file_name = buffer + 4;
+            file_name[strlen(file_name) - 1] = '\0'; // Remove the trailing newline character
+            strcpy(filename, file_name);
+            file = fopen(filename, "wb");
+            if (file == NULL) {
+                perror("Error opening file");
+                receiving_file = 0;
+            } else {
+                printf("Receiving file: %s\n", filename);
+            }
+        } else if (receiving_file) {
+            // Receiving file data
+            if (file != NULL) {
+                fwrite(buffer, 1, bytes_received, file);
+            } else {
+                fprintf(stderr, "Error: file not open for writing\n");
+                receiving_file = 0;
+            }
+        } else if (strcmp(buffer, "ls") == 0) {
             // Handle the ls command
             DIR *d;
             struct dirent *dir;

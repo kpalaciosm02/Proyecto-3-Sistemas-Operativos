@@ -1,1 +1,2 @@
-Archivo a enviar desde el cliente
+testo en enviar.txt
+
