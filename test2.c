@@ -196,7 +196,28 @@ void *handle_client(void *arg) {
                 fclose(file);
                 printf("File %s received successfully.\n", filename);
             }
-        }else {
+        } else if (strncmp(buffer, "get ", 4) == 0) {
+            // Handle the get command
+            char *filename = buffer + 4;
+            filename[strlen(filename) - 1] = '\0'; // Remove the trailing newline character
+
+            FILE *file = fopen(filename, "rb");
+            if (file == NULL) {
+                char error_msg[] = "Failed to open file for reading\n";
+                send(client_socket, error_msg, strlen(error_msg), 0);
+            } else {
+                char success_msg[] = "Ready to send file\n";
+                send(client_socket, success_msg, strlen(success_msg), 0);
+
+                char buffer[BUF_SIZE];
+                int bytes_read;
+                while ((bytes_read = fread(buffer, 1, BUF_SIZE, file)) > 0) {
+                    send(client_socket, buffer, bytes_read, 0);
+                }
+                fclose(file);
+                printf("File %s sent successfully.\n", filename);
+            }
+        } else {
             printf("Received from client: %s\n", buffer);
         }
     }
@@ -345,7 +366,38 @@ void handle_command(char *input) {
             printf("No active connection to send ls command.\n");
         }
     } else if (strcmp(args[0], "get") == 0) {
-        printf("Get command\n");
+        if (client_socket != -1) {
+            if (arg_count != 2) {
+                printf("Usage: get <filename>\n");
+                return;
+            }
+            char get_cmd[MAX_INPUT_SIZE];
+            snprintf(get_cmd, MAX_INPUT_SIZE, "get %s\n", args[1]);
+            write(client_socket, get_cmd, strlen(get_cmd));
+
+            char buffer[BUF_SIZE];
+            int bytes_received;
+            FILE *file = fopen(args[1], "wb");
+            if (file == NULL) {
+                perror("Error opening file for writing");
+                return;
+            }
+
+            // Wait for the server to be ready
+            if (recv(client_socket, buffer, BUF_SIZE, 0) > 0) {
+                printf("Server: %s\n", buffer);
+
+                // Receive the file data
+                while ((bytes_received = recv(client_socket, buffer, BUF_SIZE, 0)) > 0) {
+                    fwrite(buffer, 1, bytes_received, file);
+                }
+            }
+
+            fclose(file);
+            printf("File %s received successfully.\n", args[1]);
+        } else {
+            printf("No active connection to send get command.\n");
+        }
     } else if (strcmp(args[0], "pwd") == 0) {
         if (client_socket != -1) {
             char pwd_cmd[] = "pwd\n";
