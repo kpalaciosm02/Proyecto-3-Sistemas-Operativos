@@ -176,7 +176,7 @@ void *handle_client(void *arg) {
                 char error_msg[] = "Failed to change directory\n";
                 send(client_socket, error_msg, strlen(error_msg), 0);
             }
-        } else if (strncmp(buffer, "get ", 4) == 0) {
+        } else if (strncmp(buffer, "put ", 4) == 0) {
             char *filename = buffer + 4;
             filename[strlen(filename) - 1] = '\0'; // Remove the trailing newline character
 
@@ -303,14 +303,14 @@ void handle_command(char *input) {
         } else {
             printf("No active connection to send cd command.\n");
         }
-    } else if (strcmp(args[0], "get") == 0) {
+    } else if (strcmp(args[0], "put") == 0) {
         if (client_socket != -1) {
         if (arg_count != 2) {
-            printf("Usage: get <filename>\n");
+            printf("Usage: put <filename>\n");
             return;
         }
         char get_cmd[MAX_INPUT_SIZE];
-        snprintf(get_cmd, MAX_INPUT_SIZE, "get %s\n", args[1]);
+        snprintf(get_cmd, MAX_INPUT_SIZE, "put %s\n", args[1]);
         write(client_socket, get_cmd, strlen(get_cmd));
 
         char buffer[BUF_SIZE];
@@ -333,7 +333,7 @@ void handle_command(char *input) {
 
         fclose(file);
         } else {
-            printf("No active connection to send get command.\n");
+            printf("No active connection to send put command.\n");
         }
     } else if (strcmp(args[0], "lcd") == 0) {
         change_local_directory(args[1]);
@@ -344,8 +344,8 @@ void handle_command(char *input) {
         } else {
             printf("No active connection to send ls command.\n");
         }
-    } else if (strcmp(args[0], "put") == 0) {
-        printf("Put command\n");
+    } else if (strcmp(args[0], "get") == 0) {
+        printf("Get command\n");
     } else if (strcmp(args[0], "pwd") == 0) {
         if (client_socket != -1) {
             char pwd_cmd[] = "pwd\n";
@@ -374,8 +374,8 @@ void *handle_server(void *arg) {
         }
         buffer[bytes_received] = '\0';
 
-        if (strncmp(buffer, "get ", 4) == 0) {
-            // Handle the get command
+        if (strncmp(buffer, "put ", 4) == 0) {
+            // Handle the put command
             receiving_file = 1;
             char *file_name = buffer + 4;
             file_name[strlen(file_name) - 1] = '\0'; // Remove the trailing newline character
